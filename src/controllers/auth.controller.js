@@ -4,6 +4,21 @@ const passwordservice = require("../utils/PasswordSrevice");
 const Jwt = require("../utils/jwtService"); // 🎯 استخدام المكتبة مباشرة لحل مشكلة الـ Secret Key نهائياً
 
 class authContoller {
+  handelFailedLogin = async (user) => {
+    user.failedLoginAttempts += 1;
+    if (user.failedLoginAttempts >= 5) {
+      user.blocked = true;
+      user.lockedUntil = new Date(Date.now() + 30 * 60 * 1000); // قفل الحساب لمدة 30 دقيقة
+    }
+    await user.save();
+  };
+  resetFailedLogin = async (user) => {
+    user.failedLoginAttempts = 0;
+    user.blocked = false;
+    user.lockedUntil = null;
+    await user.save();
+  };
+
   // 1️⃣ تسجيل مستخدم جديد
   signup = async (req, res) => {
     try {
@@ -55,14 +70,28 @@ class authContoller {
     if (!user) {
       return res.status(400).json({ success: false, message: "invalid data" });
     }
+    if (user.blocked) {
+      if (user.lockedUntil && user.lockedUntil > new Date()) {
+        return res.status(403).json({
+          success: false,
+          message: "Account is temporarily locked. Please try again later.",
+        });
+      } else {
+        // رفع الحظر إذا انتهت فترة القفل
+        await this.resetFailedLogin(user);
+      }
+    }
 
     const isVerifed = await passwordservice.comparePassword(
       password,
       user.password,
     );
     if (!isVerifed) {
+      await this.handelFailedLogin(user);
       return res.status(400).json({ success: false, message: "invalid data" });
     }
+
+    await this.resetFailedLogin(user);
 
     const userObj = user.toObject();
     delete userObj.password;
